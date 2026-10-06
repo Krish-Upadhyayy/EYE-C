@@ -157,11 +157,7 @@ export default function VideoExtractionStudio({
     const curr = videoRef.current.currentTime || 0;
     setCurrentTime(curr);
 
-    // Live optical detection periodically as video plays (every 1.5s)
-    if (Math.abs(curr - lastLiveDetectTimeRef.current) >= 1.5) {
-      lastLiveDetectTimeRef.current = curr;
-      updateLiveDetection(calibratedHeadcount, sensitivityMode);
-    }
+    // High-performance time update (no heavy AI inference during active playback)
 
     // If auto extraction is on, extract frame every N seconds safely
     if (

@@ -34,8 +34,8 @@ export async function initPersonDetector() {
         await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js');
       }
       if (window.cocoSsd) {
-        cocoModel = await window.cocoSsd.load({ base: 'mobilenet_v2' });
-        console.log('✓ High-accuracy COCO-SSD Person Detection Model loaded successfully.');
+        cocoModel = await window.cocoSsd.load({ base: 'lite_mobilenet_v2' });
+        console.log('✓ Ultra-fast COCO-SSD (Lite MobileNet) Person Detection Model loaded.');
         return cocoModel;
       }
     } catch (err) {
@@ -152,6 +152,8 @@ function fallbackDetectPeople(canvas, targetW, targetH, targetCountOverride) {
   };
 }
 
+let isInferringBusy = false;
+
 // Primary Detection Entry Point
 export async function detectPeopleInFrame(
   sourceCanvasOrVideo,
@@ -165,71 +167,91 @@ export async function detectPeopleInFrame(
     return { count: 0, boxes: [] };
   }
 
-  let model = null;
+  if (isInferringBusy) {
+    // If inference is already running, prevent thread choke
+    return { count: targetCountOverride || 0, boxes: [] };
+  }
+
+  isInferringBusy = true;
+
   try {
-    model = await initPersonDetector();
-  } catch (_) {
-    model = null;
-  }
-
-  // If COCO-SSD is available, run authentic deep learning object detection
-  if (model && model.detect) {
+    let model = null;
     try {
-      const rawPredictions = await model.detect(sourceCanvasOrVideo);
-      
-      // Filter strictly for class === 'person'
-      const personPredictions = rawPredictions.filter(
-        p => p.class === 'person' && p.score >= minConfidence
-      );
-
-      // Sort by detection confidence
-      personPredictions.sort((a, b) => b.score - a.score);
-
-      const srcW = sourceCanvasOrVideo.videoWidth || sourceCanvasOrVideo.width || targetWidth;
-      const srcH = sourceCanvasOrVideo.videoHeight || sourceCanvasOrVideo.height || targetHeight;
-      const scaleX = targetWidth / srcW;
-      const scaleY = targetHeight / srcH;
-
-      // Determine final count
-      const finalCount = targetCountOverride !== null 
-        ? targetCountOverride 
-        : personPredictions.length;
-
-      const finalPredictions = personPredictions.slice(0, finalCount);
-
-      const boxes = finalPredictions.map((pred, idx) => {
-        const [bx, by, bw, bh] = pred.bbox;
-        const conf = Number(pred.score.toFixed(2));
-        return {
-          id: `trainee_coco_${Date.now()}_${idx}`,
-          label: `Person #${idx + 1} (${Math.round(conf * 100)}%)`,
-          category: 'person',
-          x: Math.round(Math.max(0, bx * scaleX)),
-          y: Math.round(Math.max(0, by * scaleY)),
-          w: Math.round(Math.min(targetWidth, bw * scaleX)),
-          h: Math.round(Math.min(targetHeight, bh * scaleY)),
-          conf
-        };
-      });
-
-      return {
-        count: finalCount,
-        boxes
-      };
-    } catch (inferErr) {
-      console.warn('COCO-SSD inference failed on frame, falling back:', inferErr);
+      model = await initPersonDetector();
+    } catch (_) {
+      model = null;
     }
-  }
 
-  // Fallback if model not yet loaded
-  let canvas = sourceCanvasOrVideo;
-  if (!(sourceCanvasOrVideo instanceof HTMLCanvasElement)) {
-    canvas = document.createElement('canvas');
-    canvas.width = 480;
-    canvas.height = 270;
-    const ctx = canvas.getContext('2d');
-    if (ctx) ctx.drawImage(sourceCanvasOrVideo, 0, 0, canvas.width, canvas.height);
-  }
+    // If COCO-SSD is available, run fast downscaled inference
+    if (model && model.detect) {
+      try {
+        // Downsample to 384x216 for sub-30ms tensor processing
+        const inferW = 384;
+        const inferH = 216;
+        const fastCanvas = document.createElement('canvas');
+        fastCanvas.width = inferW;
+        fastCanvas.height = inferH;
+        const fctx = fastCanvas.getContext('2d', { willReadFrequently: true });
+        if (fctx) {
+          fctx.drawImage(sourceCanvasOrVideo, 0, 0, inferW, inferH);
+        }
 
-  return fallbackDetectPeople(canvas, targetWidth, targetHeight, targetCountOverride);
+        const rawPredictions = await model.detect(fastCanvas);
+        
+        // Filter strictly for class === 'person'
+        const personPredictions = rawPredictions.filter(
+          p => p.class === 'person' && p.score >= minConfidence
+        );
+
+        // Sort by detection confidence
+        personPredictions.sort((a, b) => b.score - a.score);
+
+        const scaleX = targetWidth / inferW;
+        const scaleY = targetHeight / inferH;
+
+        // Determine final count
+        const finalCount = targetCountOverride !== null 
+          ? targetCountOverride 
+          : personPredictions.length;
+
+        const finalPredictions = personPredictions.slice(0, finalCount);
+
+        const boxes = finalPredictions.map((pred, idx) => {
+          const [bx, by, bw, bh] = pred.bbox;
+          const conf = Number(pred.score.toFixed(2));
+          return {
+            id: `trainee_coco_${Date.now()}_${idx}`,
+            label: `Person #${idx + 1} (${Math.round(conf * 100)}%)`,
+            category: 'person',
+            x: Math.round(Math.max(0, bx * scaleX)),
+            y: Math.round(Math.max(0, by * scaleY)),
+            w: Math.round(Math.min(targetWidth, bw * scaleX)),
+            h: Math.round(Math.min(targetHeight, bh * scaleY)),
+            conf
+          };
+        });
+
+        return {
+          count: finalCount,
+          boxes
+        };
+      } catch (inferErr) {
+        console.warn('COCO-SSD inference failed on frame, falling back:', inferErr);
+      }
+    }
+
+    // Fallback if model not yet loaded
+    let canvas = sourceCanvasOrVideo;
+    if (!(sourceCanvasOrVideo instanceof HTMLCanvasElement)) {
+      canvas = document.createElement('canvas');
+      canvas.width = 384;
+      canvas.height = 216;
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.drawImage(sourceCanvasOrVideo, 0, 0, canvas.width, canvas.height);
+    }
+
+    return fallbackDetectPeople(canvas, targetWidth, targetHeight, targetCountOverride);
+  } finally {
+    isInferringBusy = false;
+  }
 }
