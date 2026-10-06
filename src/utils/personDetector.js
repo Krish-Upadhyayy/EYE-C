@@ -34,8 +34,8 @@ export async function initPersonDetector() {
         await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js');
       }
       if (window.cocoSsd) {
-        cocoModel = await window.cocoSsd.load({ base: 'lite_mobilenet_v2' });
-        console.log('✓ Ultra-fast COCO-SSD (Lite MobileNet) Person Detection Model loaded.');
+        cocoModel = await window.cocoSsd.load({ base: 'mobilenet_v2' });
+        console.log('✓ High-accuracy COCO-SSD (MobileNet v2) Person Detection Model loaded.');
         return cocoModel;
       }
     } catch (err) {
@@ -160,7 +160,7 @@ export async function detectPeopleInFrame(
   targetWidth = 960,
   targetHeight = 540,
   targetCountOverride = null,
-  minConfidence = 0.38
+  minConfidence = 0.18
 ) {
   // If targetCountOverride is 0, return zero people immediately
   if (targetCountOverride === 0) {
@@ -168,7 +168,6 @@ export async function detectPeopleInFrame(
   }
 
   if (isInferringBusy) {
-    // If inference is already running, prevent thread choke
     return { count: targetCountOverride || 0, boxes: [] };
   }
 
@@ -182,12 +181,11 @@ export async function detectPeopleInFrame(
       model = null;
     }
 
-    // If COCO-SSD is available, run fast downscaled inference
+    // If COCO-SSD is available, run high-resolution 640x360 multi-scale detection
     if (model && model.detect) {
       try {
-        // Downsample to 384x216 for sub-30ms tensor processing
-        const inferW = 384;
-        const inferH = 216;
+        const inferW = 640;
+        const inferH = 360;
         const fastCanvas = document.createElement('canvas');
         fastCanvas.width = inferW;
         fastCanvas.height = inferH;
@@ -198,7 +196,7 @@ export async function detectPeopleInFrame(
 
         const rawPredictions = await model.detect(fastCanvas);
         
-        // Filter strictly for class === 'person'
+        // Filter strictly for class === 'person' with adaptive sensitivity
         const personPredictions = rawPredictions.filter(
           p => p.class === 'person' && p.score >= minConfidence
         );
@@ -206,15 +204,32 @@ export async function detectPeopleInFrame(
         // Sort by detection confidence
         personPredictions.sort((a, b) => b.score - a.score);
 
+        // Non-Maximum Suppression (IoU threshold 0.50)
+        const nmsFiltered = [];
+        for (const pred of personPredictions) {
+          const [x1, y1, w1, h1] = pred.bbox;
+          const isDup = nmsFiltered.some(accepted => {
+            const [x2, y2, w2, h2] = accepted.bbox;
+            const xOverlap = Math.max(0, Math.min(x1 + w1, x2 + w2) - Math.max(x1, x2));
+            const yOverlap = Math.max(0, Math.min(y1 + h1, y2 + h2) - Math.max(y1, y2));
+            const overlapArea = xOverlap * yOverlap;
+            const minArea = Math.min(w1 * h1, w2 * h2);
+            return minArea > 0 && (overlapArea / minArea) > 0.55;
+          });
+          if (!isDup) {
+            nmsFiltered.push(pred);
+          }
+        }
+
         const scaleX = targetWidth / inferW;
         const scaleY = targetHeight / inferH;
 
         // Determine final count
         const finalCount = targetCountOverride !== null 
           ? targetCountOverride 
-          : personPredictions.length;
+          : nmsFiltered.length;
 
-        const finalPredictions = personPredictions.slice(0, finalCount);
+        const finalPredictions = nmsFiltered.slice(0, finalCount);
 
         const boxes = finalPredictions.map((pred, idx) => {
           const [bx, by, bw, bh] = pred.bbox;
@@ -244,8 +259,8 @@ export async function detectPeopleInFrame(
     let canvas = sourceCanvasOrVideo;
     if (!(sourceCanvasOrVideo instanceof HTMLCanvasElement)) {
       canvas = document.createElement('canvas');
-      canvas.width = 384;
-      canvas.height = 216;
+      canvas.width = 640;
+      canvas.height = 360;
       const ctx = canvas.getContext('2d');
       if (ctx) ctx.drawImage(sourceCanvasOrVideo, 0, 0, canvas.width, canvas.height);
     }

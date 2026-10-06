@@ -46,7 +46,7 @@ export default function VideoExtractionStudio({
   const [videoPlaybackError, setVideoPlaybackError] = useState(null);
 
   // Student Headcount Accuracy & Calibration State
-  const [sensitivityMode, setSensitivityMode] = useState('balanced'); // 'strict', 'balanced', 'sensitive'
+  const [sensitivityMode, setSensitivityMode] = useState('sensitive'); // 'strict', 'balanced', 'sensitive'
   const [calibratedHeadcount, setCalibratedHeadcount] = useState(null); // null = auto CV, or manual number
   const [showDetectionBoxes, setShowDetectionBoxes] = useState(true);
   const [activeBoxes, setActiveBoxes] = useState([]);
@@ -128,7 +128,7 @@ export default function VideoExtractionStudio({
   const [notification, setNotification] = useState(null);
 
   // Live Optical Frame Detection (Samples video to evaluate headcount and bounding boxes live)
-  const updateLiveDetection = async (overrideCount = calibratedHeadcount) => {
+  const updateLiveDetection = async (overrideCount = calibratedHeadcount, overrideSens = sensitivityMode) => {
     if (!videoRef.current || videoRef.current.readyState < 2) return;
     try {
       const video = videoRef.current;
@@ -139,7 +139,8 @@ export default function VideoExtractionStudio({
       if (!ctx) return;
       ctx.drawImage(video, 0, 0, offscreen.width, offscreen.height);
       
-      const result = await detectPeopleInFrame(offscreen, 960, 540, overrideCount);
+      const confThreshold = overrideSens === 'sensitive' ? 0.16 : (overrideSens === 'strict' ? 0.35 : 0.22);
+      const result = await detectPeopleInFrame(offscreen, 960, 540, overrideCount, confThreshold);
       setLiveDetectedCount(result.count);
       setActiveBoxes(result.boxes);
     } catch (_) {}
@@ -260,11 +261,13 @@ export default function VideoExtractionStudio({
       }
 
       // Run high-accuracy deep learning person detection (COCO-SSD / Morphological Contour)
+      const confThreshold = sensitivityMode === 'sensitive' ? 0.16 : (sensitivityMode === 'strict' ? 0.35 : 0.22);
       const detectionResult = await detectPeopleInFrame(
         canvas, 
         960, 
         540, 
-        calibratedHeadcount
+        calibratedHeadcount,
+        confThreshold
       );
 
       const accurateCount = detectionResult.count;
@@ -592,6 +595,21 @@ export default function VideoExtractionStudio({
                   title="Add 1 student if partially out of frame"
                 >
                   + 1
+                </button>
+                <button
+                  className="btn-secondary"
+                  style={{
+                    padding: '2px 8px',
+                    fontSize: '0.70rem',
+                    fontWeight: 700,
+                    background: calibratedHeadcount === 6 ? '#facc15' : 'rgba(250, 204, 21, 0.15)',
+                    color: calibratedHeadcount === 6 ? '#000000' : '#facc15',
+                    borderColor: '#facc15'
+                  }}
+                  onClick={() => setCalibratedHeadcount(6)}
+                  title="Quick-set observed count to 6"
+                >
+                  Set 6 (Observed)
                 </button>
                 {calibratedHeadcount !== null && (
                   <button
