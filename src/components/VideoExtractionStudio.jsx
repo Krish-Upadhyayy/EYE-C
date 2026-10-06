@@ -155,23 +155,18 @@ export default function VideoExtractionStudio({
 
   const hasSubmittedAttendance = Boolean(latestAttendance || activeCentre?.reported_attendance !== undefined);
 
-  // Live Optical Frame Detection (Searches the CCTV recording to verify presence against submitted roll)
+  // Live Optical Frame Detection (Detects moving people dynamically from video)
   const updateLiveDetection = async (overrideSens = sensitivityMode) => {
     if (!videoRef.current || videoRef.current.readyState < 2) return;
     try {
       const video = videoRef.current;
-      const offscreen = document.createElement('canvas');
-      offscreen.width = Math.min(640, video.videoWidth || 640);
-      offscreen.height = Math.min(360, video.videoHeight || 360);
-      const ctx = offscreen.getContext('2d', { willReadFrequently: true });
-      if (!ctx) return;
-      ctx.drawImage(video, 0, 0, offscreen.width, offscreen.height);
-      
-      const confThreshold = overrideSens === 'sensitive' ? 0.16 : (overrideSens === 'strict' ? 0.35 : 0.22);
-      // Run AI vision model to detect trainees present in recording
-      const result = await detectPeopleInFrame(offscreen, 960, 540, toldStudentCount, confThreshold);
-      setLiveDetectedCount(result.count);
-      setActiveBoxes(result.boxes);
+      const confThreshold = overrideSens === 'sensitive' ? 0.18 : (overrideSens === 'strict' ? 0.35 : 0.24);
+      // Run AI vision model dynamically on the video frame
+      const result = await detectPeopleInFrame(video, 960, 540, confThreshold);
+      if (result) {
+        setLiveDetectedCount(result.count);
+        setActiveBoxes(result.boxes);
+      }
     } catch (_) {}
   };
 
@@ -179,14 +174,39 @@ export default function VideoExtractionStudio({
     if (videoUrl) {
       updateLiveDetection(sensitivityMode);
     }
-  }, [videoUrl, toldStudentCount, sensitivityMode]);
+  }, [videoUrl, sensitivityMode]);
+
+  // Dynamic real-time motion tracking loop while video is actively playing
+  useEffect(() => {
+    let animId = null;
+    let lastInferTime = 0;
+
+    const dynamicTrackLoop = (timestamp) => {
+      if (isPlaying && videoRef.current && !videoRef.current.paused) {
+        // Track every 120ms (smooth ~8 FPS CV updates, zero video stutter)
+        if (timestamp - lastInferTime >= 120) {
+          lastInferTime = timestamp;
+          updateLiveDetection();
+        }
+        animId = requestAnimationFrame(dynamicTrackLoop);
+      }
+    };
+
+    if (isPlaying) {
+      animId = requestAnimationFrame(dynamicTrackLoop);
+    }
+
+    return () => {
+      if (animId) cancelAnimationFrame(animId);
+    };
+  }, [isPlaying, sensitivityMode]);
 
   // Compiled presence metrics
-  const recDetectedCount = liveDetectedCount !== null ? liveDetectedCount : (videoUrl ? toldStudentCount : 0);
-  const presentCount = Math.min(toldStudentCount, recDetectedCount);
-  const absentCount = Math.max(0, toldStudentCount - recDetectedCount);
-  const surplusCount = Math.max(0, recDetectedCount - toldStudentCount);
-  const compliancePct = toldStudentCount > 0 ? Math.min(100, Math.round((presentCount / toldStudentCount) * 100)) : 100;
+  const recDetectedCount = liveDetectedCount !== null ? liveDetectedCount : (videoUrl ? 0 : null);
+  const presentCount = recDetectedCount !== null ? Math.min(toldStudentCount, recDetectedCount) : 0;
+  const absentCount = recDetectedCount !== null ? Math.max(0, toldStudentCount - recDetectedCount) : 0;
+  const surplusCount = recDetectedCount !== null ? Math.max(0, recDetectedCount - toldStudentCount) : 0;
+  const compliancePct = toldStudentCount > 0 && recDetectedCount !== null ? Math.min(100, Math.round((presentCount / toldStudentCount) * 100)) : 100;
 
   // Video time update handler with robust synchronization lock
   const handleTimeUpdate = () => {
@@ -297,12 +317,11 @@ export default function VideoExtractionStudio({
       }
 
       // Run high-accuracy deep learning person detection (COCO-SSD / Morphological Contour)
-      const confThreshold = sensitivityMode === 'sensitive' ? 0.16 : (sensitivityMode === 'strict' ? 0.35 : 0.22);
+      const confThreshold = sensitivityMode === 'sensitive' ? 0.18 : (sensitivityMode === 'strict' ? 0.35 : 0.24);
       const detectionResult = await detectPeopleInFrame(
         canvas, 
         960, 
         540, 
-        toldStudentCount,
         confThreshold
       );
 
@@ -735,17 +754,23 @@ export default function VideoExtractionStudio({
                           width={box.w}
                           height={box.h}
                           stroke="#22c55e"
-                          strokeWidth="2"
-                          fill="rgba(34, 197, 94, 0.12)"
-                          rx="3"
+                          strokeWidth="2.5"
+                          fill="rgba(34, 197, 94, 0.14)"
+                          rx="4"
+                          style={{
+                            transition: 'all 0.12s linear'
+                          }}
                         />
                         <rect
                           x={box.x}
                           y={Math.max(0, box.y - 18)}
-                          width={Math.min(box.w, 120)}
+                          width={Math.min(box.w, 130)}
                           height="16"
                           fill="#22c55e"
                           rx="2"
+                          style={{
+                            transition: 'all 0.12s linear'
+                          }}
                         />
                         <text
                           x={box.x + 4}
@@ -754,6 +779,9 @@ export default function VideoExtractionStudio({
                           fontSize="10"
                           fontFamily="monospace"
                           fontWeight="bold"
+                          style={{
+                            transition: 'all 0.12s linear'
+                          }}
                         >
                           {box.label || `Student #${bIdx + 1}`}
                         </text>

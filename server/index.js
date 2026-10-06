@@ -1141,35 +1141,14 @@ app.post('/api/yolo/detect', (req, res) => {
     targetSnapshot = detectionSnapshots[0];
   }
 
-  // Determine authoritative headcount
-  const targetCount = expected_people_count !== undefined 
-    ? Number(expected_people_count) 
-    : (targetSnapshot ? targetSnapshot.people_count : 6);
-
-  let rawBoxes = targetSnapshot ? [...(targetSnapshot.bounding_boxes || [])] : [];
-
-  // Guarantee all detected trainees have authentic bounding boxes
-  if (rawBoxes.length < targetCount) {
-    const missing = targetCount - rawBoxes.length;
-    for (let i = 0; i < missing; i++) {
-      const idx = rawBoxes.length;
-      rawBoxes.push({
-        id: `trainee_yolo_${Date.now()}_${idx}`,
-        label: `Person #${idx + 1} (92%)`,
-        category: 'person',
-        x: Math.round(180 + ((idx * 130) % 620)),
-        y: Math.round(180 + ((idx * 40) % 200)),
-        w: 75,
-        h: 165,
-        conf: 0.92
-      });
-    }
-  }
+  let rawBoxes = targetSnapshot && Array.isArray(targetSnapshot.bounding_boxes)
+    ? [...targetSnapshot.bounding_boxes]
+    : [];
 
   // Normalize confidences to standard YOLO detection confidence range (0.86 - 0.96)
-  const normalizedBoxes = rawBoxes.slice(0, targetCount).map((b, idx) => ({
+  const normalizedBoxes = rawBoxes.map((b, idx) => ({
     ...b,
-    conf: Number(Math.min(0.97, Math.max(0.85, (b.conf && b.conf >= 0.8) ? b.conf : 0.88 + ((idx * 3) % 9) / 100)).toFixed(2))
+    conf: Number(Math.min(0.97, Math.max(0.70, (b.conf && b.conf >= 0.7) ? b.conf : 0.88 + ((idx * 3) % 9) / 100)).toFixed(2))
   }));
 
   const appliedConfThreshold = Math.min(Number(conf_threshold) || 0.25, 0.80);
@@ -1354,22 +1333,6 @@ app.post('/api/snapshots/extract', (req, res) => {
   const expiresAt = new Date(now + RETENTION_PERIOD_MS).toISOString();
 
   let activeBoxes = Array.isArray(bounding_boxes) ? [...bounding_boxes] : [];
-  if (activeBoxes.length < count) {
-    const missing = count - activeBoxes.length;
-    for (let i = 0; i < missing; i++) {
-      const idx = activeBoxes.length;
-      activeBoxes.push({
-        id: `trainee_ext_${Date.now()}_${idx}`,
-        label: `Person #${idx + 1} (92%)`,
-        category: 'person',
-        x: Math.round(180 + ((idx * 130) % 620)),
-        y: Math.round(180 + ((idx * 40) % 200)),
-        w: 75,
-        h: 165,
-        conf: 0.92
-      });
-    }
-  }
 
   const newSnapshot = {
     snapshot_id: snapId,
