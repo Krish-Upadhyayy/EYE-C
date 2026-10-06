@@ -95,7 +95,7 @@ export default function AttendanceView({
             </h3>
             <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
               Training centres are required to record morning attendance headcounts at the commencement of training daily.
-              Our edge AI system verifies presence against periodic CCTV frames without retaining personal facial data.
+              Our edge AI system verifies presence against live CCTV camera optical streams using real-time YOLOv11 deep learning object detection.
             </p>
 
             {statusMessage && (

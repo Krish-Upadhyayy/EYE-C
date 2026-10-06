@@ -77,7 +77,13 @@ export default function EvidenceReview({
 
   // Filter snapshots
   const filteredSnapshots = snapshots.filter(s => {
-    const isFlagged = (s.temporal_diff && s.temporal_diff.people_count_delta < 0) || (s.discrepancy && s.discrepancy < 0) || s.verification_status?.includes('Confirmed');
+    const isFlagged = Boolean(
+      s.is_flagged || 
+      s.flag_type || 
+      (s.temporal_diff && s.temporal_diff.people_count_delta < 0) || 
+      (s.discrepancy && s.discrepancy < 0) || 
+      s.verification_status?.includes('Confirmed')
+    );
     const isVerified = !!s.verification;
 
     if (filterMode === 'flagged') return isFlagged;
@@ -90,6 +96,21 @@ export default function EvidenceReview({
   const calculateYoloFlags = (snap) => {
     if (!snap) return [];
     const flags = [];
+
+    // 0. Explicit Incident Flag (Accident, Missing Student, Irregularity)
+    if (snap.is_flagged || snap.flag_type) {
+      flags.push({
+        id: `flag-incident-${snap.flag_id || snap.snapshot_id || Date.now()}`,
+        category: snap.category || (snap.flag_type === 'ACCIDENT' ? 'Emergency / Physical Hazard' : (snap.flag_type === 'MISSING_STUDENT' ? 'Attendance Mismatch' : 'Compliance Non-Compliance')),
+        severity: snap.flag_severity || (snap.flag_type === 'ACCIDENT' ? 'Critical' : 'High'),
+        title: snap.flag_title || `${snap.flag_type || 'Incident'} at ${snap.video_timestamp || '00:00'}`,
+        description: snap.flag_description || snap.notes || `Incident flagged at video time ${snap.video_timestamp || '00:00'}. Timestamped CCTV evidence captured.`,
+        action_required: snap.flag_type === 'ACCIDENT' 
+          ? '🚨 Urgent: Dispatch emergency response & review CCTV footage immediately' 
+          : '⚠️ Reconcile roll call register with video headcount and verify student presence'
+      });
+    }
+
     const delta = snap.temporal_diff ? snap.temporal_diff.people_count_delta : (snap.discrepancy || 0);
 
     // 1. Headcount Variance Flag
@@ -222,8 +243,8 @@ export default function EvidenceReview({
           <span className="badge badge-info" style={{ fontFamily: 'var(--font-mono)' }}>
             {snapshots.length} Total Frames
           </span>
-          <span className="badge badge-attention" style={{ fontFamily: 'var(--font-mono)' }}>
-            🛡️ 7-Day Auto-Purge Active
+          <span className="badge badge-info" style={{ fontFamily: 'var(--font-mono)' }}>
+            ⚡ YOLOv11 Optical Feed (Raw)
           </span>
           {alerts.length > 0 && (
             <span className="badge badge-critical">
@@ -356,8 +377,8 @@ export default function EvidenceReview({
                     <span style={{ color: '#94a3b8', fontSize: '0.62rem' }}>Normal</span>
                   )}
                 </div>
-                <div style={{ fontSize: '0.58rem', color: '#fde047', marginTop: '0.15rem' }}>
-                  🛡️ Purges in {snap.retention_remaining_days || 7}d
+                <div style={{ fontSize: '0.58rem', color: '#38bdf8', marginTop: '0.15rem' }}>
+                  ⚡ YOLO Detection Feed
                 </div>
               </div>
             );

@@ -63,8 +63,8 @@ export default function AiEvaluationView() {
         </div>
 
         <div className="section-actions">
-          <span className="badge badge-attention" style={{ fontFamily: 'var(--font-mono)' }}>
-            🛡️ 7-Day Auto-Purge
+          <span className="badge badge-info" style={{ fontFamily: 'var(--font-mono)' }}>
+            ⚡ YOLOv11x Real-Time Stream
           </span>
           <span className="badge badge-info" style={{ fontFamily: 'var(--font-mono)' }}>
             Dataset: {summary.dataset_name}
