@@ -130,6 +130,20 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
+    const ct = res.headers.get('content-type') || '';
+    if (!res.ok || !ct.includes('application/json')) {
+      const errText = await res.text();
+      let errorMsg = `Server response error (${res.status})`;
+      try {
+        const parsed = JSON.parse(errText);
+        if (parsed.error) errorMsg = parsed.error;
+      } catch (_) {
+        if (errText.includes('<!doctype') || errText.includes('<html')) {
+          errorMsg = 'Backend API is currently offline or unreachable. Please make sure your backend is running on Render/Railway and netlify.toml is pointing to it.';
+        }
+      }
+      throw new Error(errorMsg);
+    }
     const data = await res.json();
     await fetchData();
     if (data.centre) {

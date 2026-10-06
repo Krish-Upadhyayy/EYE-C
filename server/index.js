@@ -19,6 +19,20 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// Cloud Health Check & Status Endpoints for Render / Railway / Netlify
+app.get('/', (req, res) => {
+  res.json({
+    status: 'online',
+    service: 'EYE-C AI Compliance Backend API',
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', uptime: Math.floor(process.uptime()) });
+});
+
 // Helper to compute centre compliance scores dynamically
 function calculateCentreScore(centreId) {
   const centre = centres.find(c => c.centre_id === centreId);

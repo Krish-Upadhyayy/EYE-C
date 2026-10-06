@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: eyec-backend
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run server
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 20

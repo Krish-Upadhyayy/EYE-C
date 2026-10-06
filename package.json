@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host",
     "server": "node server/index.js",
+    "start:server": "node server/index.js",
     "start": "concurrently \"node server/index.js\" \"vite --host\"",
     "build": "vite build",
     "preview": "vite preview"

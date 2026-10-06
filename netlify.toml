@@ -2,6 +2,15 @@
   command = "npm run build"
   publish = "dist"
 
+# 1. Forward all API calls to your live backend (Render, Railway, Fly.io)
+# Replace "https://your-backend-app.onrender.com" with your actual Render URL
+[[redirects]]
+  from = "/api/*"
+  to = "https://YOUR_BACKEND_URL.onrender.com/api/:splat"
+  status = 200
+  force = true
+
+# 2. SPA fallback for frontend routes
 [[redirects]]
   from = "/*"
   to = "/index.html"

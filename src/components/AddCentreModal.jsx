@@ -9,11 +9,13 @@ export default function AddCentreModal({ onClose, onAddCentre }) {
   const [capacity, setCapacity] = useState(40);
   const [workshop, setWorkshop] = useState('General Practical & Electronics Bay');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!name || !location) return;
     setIsSubmitting(true);
+    setErrorMessage('');
     try {
       await onAddCentre({
         name,
@@ -26,6 +28,7 @@ export default function AddCentreModal({ onClose, onAddCentre }) {
       onClose();
     } catch (err) {
       console.error(err);
+      setErrorMessage(err.message || 'Failed to add training centre. Please check backend API connection.');
     } finally {
       setIsSubmitting(false);
     }
@@ -43,6 +46,21 @@ export default function AddCentreModal({ onClose, onAddCentre }) {
             <X size={18} />
           </button>
         </div>
+
+        {errorMessage && (
+          <div style={{
+            background: 'rgba(239, 68, 68, 0.15)',
+            border: '1px solid rgba(239, 68, 68, 0.4)',
+            color: '#fca5a5',
+            padding: '0.6rem 0.8rem',
+            borderRadius: '6px',
+            fontSize: '0.78rem',
+            marginBottom: '0.75rem',
+            lineHeight: 1.4
+          }}>
+            <strong>Connection Error:</strong> {errorMessage}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit}>
           <div className="form-group" style={{ marginBottom: '0.55rem' }}>
