@@ -14,7 +14,7 @@ import {
 
 export default function YoloInspectorView({ snapshots = [] }) {
   const [selectedSnapshotId, setSelectedSnapshotId] = useState(snapshots[0]?.snapshot_id || '');
-  const [confThreshold, setConfThreshold] = useState(0.50);
+  const [confThreshold, setConfThreshold] = useState(0.25);
   const [iouThreshold, setIouThreshold] = useState(0.45);
   const [pipelineData, setPipelineData] = useState(null);
   const [isInferring, setIsInferring] = useState(false);
@@ -37,6 +37,7 @@ export default function YoloInspectorView({ snapshots = [] }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           snapshot_id: selectedSnapshotId || snapshots[0]?.snapshot_id,
+          expected_people_count: activeSnapshot?.people_count || 6,
           conf_threshold: Number(confThreshold),
           iou_threshold: Number(iouThreshold)
         })
