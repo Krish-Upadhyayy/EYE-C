@@ -94,8 +94,8 @@ flowchart TD
 
 1. **Clone the Repository**:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/EYEC.git
-   cd EYEC
+   git clone https://github.com/Krish-Upadhyayy/EYE-C.git
+   cd EYE-C
    ```
 
 2. **Install Dependencies**:
