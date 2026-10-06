@@ -117,15 +117,6 @@ export default function EvidenceReview({
       });
     }
 
-    // 3. Raw Sensor Optical Fidelity (Zero Blur Obfuscation)
-    flags.push({
-      id: 'flag-raw-clarity',
-      category: 'Optical Sensor Fidelity',
-      severity: 'Compliant Info',
-      title: 'Full-Resolution Raw Optical Capture (Zero Blur)',
-      description: `Raw camera sensor frame analyzed directly without privacy blur masking for pinpoint student detection and headcount accuracy.`,
-      action_required: '100% optical fidelity maintained.'
-    });
 
     // 4. Bandwidth Optimization
     flags.push({
@@ -412,9 +403,8 @@ export default function EvidenceReview({
               <span 
                 className="badge badge-compliant"
                 style={{ padding: '2px 6px', fontSize: '0.66rem', fontFamily: 'var(--font-mono)' }}
-                title="Full raw sensor optical clarity with zero blur obfuscation"
               >
-                Raw Clarity 100%
+                AI Detections Active
               </span>
             </div>
           </div>

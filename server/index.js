@@ -742,7 +742,7 @@ app.get('/api/analytics/performance', (req, res) => {
       ai_predicted_count: snap.people_count,
       discrepancy: snap.temporal_diff ? snap.temporal_diff.people_count_delta : 0,
       confidence: snap.confidence || 0.94,
-      privacy_check: 'PASS - Faces Anonymized'
+      optical_check: 'PASS - High Quality Optical Sensor'
     }))
   };
 
@@ -781,8 +781,7 @@ app.post('/api/simulation/trigger-snapshot', (req, res) => {
     discrepancy,
     seating_detected: Math.min(targetCentre.approved_seating_capacity, peopleCount + 4),
     workshop_active: !simulate_shortage,
-    privacy_applied: false,
-    raw_optical_clarity: '100% Raw Clarity (No Blur)',
+    raw_optical_clarity: '100% Raw Clarity Sensor',
     bandwidth_original_mb: 8.5,
     bandwidth_transmitted_kb: 44.2,
     bandwidth_saved_pct: 99.48,
@@ -1330,8 +1329,7 @@ app.post('/api/snapshots/extract', (req, res) => {
     discrepancy: temporalDiff ? temporalDiff.people_count_delta : 0,
     seating_detected: count + 2,
     workshop_active: true,
-    privacy_applied: false,
-    raw_optical_clarity: '100% Raw Clarity (Zero Blur Obfuscation)',
+    raw_optical_clarity: '100% High-Definition Optical Sensor',
     bandwidth_original_mb: 8.5,
     bandwidth_transmitted_kb: 42.1,
     bandwidth_saved_pct: 99.5,

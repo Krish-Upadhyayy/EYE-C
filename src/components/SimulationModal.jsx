@@ -41,7 +41,7 @@ export default function SimulationModal({ centres, onClose, onSimulate }) {
         </div>
 
         <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
-          Simulates the edge computer extracting a periodic video frame (1-5 min), running local YOLO/CV inference, applying face anonymization, evaluating compliance rules, and dispatching evidence metadata to the central dashboard.
+          Simulates the edge computer extracting a periodic video frame (1-5 min), running local deep learning vision inference, evaluating compliance rules, and dispatching evidence metadata to the central dashboard.
         </p>
 
         {simulationResult ? (

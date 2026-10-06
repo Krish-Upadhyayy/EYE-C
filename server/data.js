@@ -28,7 +28,6 @@ export const aiEvaluationMetrics = {
     false_positive_rate_pct: 0,
     false_negative_rate_pct: 0,
     avg_inference_latency_ms: 0,
-    face_anonymization_success_pct: 100,
     bandwidth_reduction_pct: 99.2
   },
   scenarios: [],

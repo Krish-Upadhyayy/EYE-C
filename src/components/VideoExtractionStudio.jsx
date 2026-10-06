@@ -21,6 +21,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 import ErrorBoundary from './ErrorBoundary';
+import { detectPeopleInFrame } from '../utils/personDetector';
 
 export default function VideoExtractionStudio({ 
   centres, 
@@ -127,18 +128,18 @@ export default function VideoExtractionStudio({
   const [notification, setNotification] = useState(null);
 
   // Live Optical Frame Detection (Samples video to evaluate headcount and bounding boxes live)
-  const updateLiveDetection = (overrideCount = calibratedHeadcount, overrideSens = sensitivityMode) => {
+  const updateLiveDetection = async (overrideCount = calibratedHeadcount) => {
     if (!videoRef.current || videoRef.current.readyState < 2) return;
     try {
       const video = videoRef.current;
       const offscreen = document.createElement('canvas');
-      offscreen.width = 480;
-      offscreen.height = 270;
+      offscreen.width = Math.min(640, video.videoWidth || 640);
+      offscreen.height = Math.min(360, video.videoHeight || 360);
       const ctx = offscreen.getContext('2d', { willReadFrequently: true });
       if (!ctx) return;
       ctx.drawImage(video, 0, 0, offscreen.width, offscreen.height);
       
-      const result = performCanvasStudentDetection(offscreen, overrideSens, overrideCount, 960, 540);
+      const result = await detectPeopleInFrame(offscreen, 960, 540, overrideCount);
       setLiveDetectedCount(result.count);
       setActiveBoxes(result.boxes);
     } catch (_) {}
@@ -208,176 +209,9 @@ export default function VideoExtractionStudio({
     }
   };
 
-  // High-Accuracy CV & YOLO Student Detection on Frame Pixels (Raw Optical Capture, Zero Blur)
-  const performCanvasStudentDetection = (canvas, sensitivity = 'balanced', manualCountOverride = null, targetCoordW = null, targetCoordH = null) => {
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    const width = canvas.width;
-    const height = canvas.height;
-    const coordW = targetCoordW || width;
-    const coordH = targetCoordH || height;
-    const scaleX = coordW / width;
-    const scaleY = coordH / height;
-    
-    // Sample frame data safely
-    let sampleData = null;
-    try {
-      sampleData = ctx.getImageData(0, 0, width, height);
-    } catch (_) {
-      sampleData = null;
-    }
-
-    // Classroom Seating & Floor Activity Zone Scan (12 cols x 6 rows)
-    const cols = 12;
-    const rows = 6;
-    const startX = width * 0.04;
-    const endX = width * 0.96;
-    const startY = height * 0.16;
-    const endY = height * 0.92;
-    
-    const cellW = (endX - startX) / cols;
-    const cellH = (endY - startY) / rows;
-
-    const candidates = [];
-
-    if (sampleData) {
-      const pixels = sampleData.data;
-      
-      // Calculate energy for each candidate grid zone
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          const zoneX = Math.round(startX + c * cellW);
-          const zoneY = Math.round(startY + r * cellH);
-          const zoneW = Math.round(cellW);
-          const zoneH = Math.round(cellH);
-
-          let sumLum = 0;
-          let sumLumSq = 0;
-          let edgeTransitions = 0;
-          let colorDeltas = 0;
-          let samplesTaken = 0;
-
-          // 8x8 spatial sampling inside each cell (64 pixel points)
-          for (let sy = 1; sy < 8; sy++) {
-            for (let sx = 1; sx < 8; sx++) {
-              const px = Math.min(width - 2, zoneX + Math.round((sx / 8) * zoneW));
-              const py = Math.min(height - 2, zoneY + Math.round((sy / 8) * zoneH));
-              const idx = (py * width + px) * 4;
-              
-              const rVal = pixels[idx] || 0;
-              const gVal = pixels[idx + 1] || 0;
-              const bVal = pixels[idx + 2] || 0;
-              const lum = 0.299 * rVal + 0.587 * gVal + 0.114 * bVal;
-
-              // Neighbor pixel gradients for edge contrast
-              const rightIdx = (py * width + (px + 1)) * 4;
-              const downIdx = ((py + 1) * width + px) * 4;
-              const rightLum = 0.299 * (pixels[rightIdx] || 0) + 0.587 * (pixels[rightIdx + 1] || 0) + 0.114 * (pixels[rightIdx + 2] || 0);
-              const downLum = 0.299 * (pixels[downIdx] || 0) + 0.587 * (pixels[downIdx + 1] || 0) + 0.114 * (pixels[downIdx + 2] || 0);
-              
-              const grad = Math.abs(lum - rightLum) + Math.abs(lum - downLum);
-              if (grad > 20) edgeTransitions++;
-
-              colorDeltas += (Math.abs(rVal - gVal) + Math.abs(gVal - bVal));
-              sumLum += lum;
-              sumLumSq += lum * lum;
-              samplesTaken++;
-            }
-          }
-
-          const meanLum = samplesTaken > 0 ? sumLum / samplesTaken : 128;
-          const variance = samplesTaken > 0 ? Math.max(0, (sumLumSq / samplesTaken) - (meanLum * meanLum)) : 0;
-          const stdDev = Math.sqrt(variance);
-          const edgeRatio = samplesTaken > 0 ? edgeTransitions / samplesTaken : 0;
-          const avgColorDelta = samplesTaken > 0 ? colorDeltas / samplesTaken : 0;
-
-          // Feature score: Human head/torso presence combines high edge density, contrast variance, and chromaticity
-          const energyScore = (edgeRatio * 2.2) + (stdDev / 36) + (avgColorDelta / 70);
-
-          candidates.push({
-            row: r,
-            col: c,
-            x: Math.round(zoneX * scaleX),
-            y: Math.round(zoneY * scaleY),
-            w: Math.round(zoneW * scaleX * 0.90),
-            h: Math.round(zoneH * scaleY * 1.15),
-            score: energyScore
-          });
-        }
-      }
-    } else {
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          candidates.push({
-            row: r,
-            col: c,
-            x: Math.round((startX + c * cellW) * scaleX),
-            y: Math.round((startY + r * cellH) * scaleY),
-            w: Math.round(cellW * scaleX * 0.90),
-            h: Math.round(cellH * scaleY * 1.15),
-            score: 0.5 + ((r * 7 + c * 11) % 43) / 100
-          });
-        }
-      }
-    }
-
-    // Compute dynamic scene baseline energy
-    const allScores = candidates.map(c => c.score).sort((a, b) => a - b);
-    const medianScore = allScores[Math.floor(allScores.length / 2)] || 0.4;
-    const maxScore = allScores[allScores.length - 1] || 1.0;
-    const scoreRange = Math.max(0.1, maxScore - medianScore);
-
-    // Adaptive threshold based on sensitivity
-    let thresholdMultiplier = 0.45;
-    if (sensitivity === 'strict') thresholdMultiplier = 0.70;
-    if (sensitivity === 'sensitive') thresholdMultiplier = 0.22;
-
-    const autoThreshold = medianScore + (scoreRange * thresholdMultiplier);
-
-    // Spatial clustering / NMS: Filter and suppress adjacent overlapping hits
-    candidates.sort((a, b) => b.score - a.score);
-
-    const mergedCandidates = [];
-    for (const cand of candidates) {
-      if (cand.score < autoThreshold && manualCountOverride === null) continue;
-      
-      const isDuplicate = mergedCandidates.some(accepted => {
-        const dx = Math.abs(accepted.x - cand.x);
-        const dy = Math.abs(accepted.y - cand.y);
-        return dx < (cand.w * 0.75) && dy < (cand.h * 0.75);
-      });
-
-      if (!isDuplicate) {
-        mergedCandidates.push(cand);
-      }
-    }
-
-    // Determine target headcount (0 is valid if room is empty!)
-    let targetCount = manualCountOverride !== null 
-      ? Math.max(0, manualCountOverride) 
-      : mergedCandidates.length;
-
-    // Pick top targetCount bounding boxes
-    const selected = (manualCountOverride !== null ? candidates : mergedCandidates).slice(0, targetCount);
-
-    const detectedBoxes = selected.map((pos, idx) => {
-      const normalizedScore = Math.min(0.98, Math.max(0.85, 0.88 + ((pos.score - medianScore) / (scoreRange * 2))));
-      const conf = Number(normalizedScore.toFixed(2));
-      return {
-        id: `trainee_det_${Date.now()}_${idx}`,
-        label: `Trainee #${idx + 1} (${Math.round(conf * 100)}%)`,
-        category: 'person',
-        x: pos.x,
-        y: pos.y,
-        w: pos.w,
-        h: pos.h,
-        conf
-      };
-    });
-
-    return {
-      count: targetCount,
-      boxes: detectedBoxes
-    };
+  // High-Accuracy Deep Learning & AI Person Detection
+  const performCanvasStudentDetection = async (canvas, sensitivity = 'balanced', manualCountOverride = null, targetCoordW = 960, targetCoordH = 540) => {
+    return await detectPeopleInFrame(canvas, targetCoordW, targetCoordH, manualCountOverride);
   };
 
   // Extract snapshot from video canvas with accurate CV headcount
@@ -429,13 +263,12 @@ export default function VideoExtractionStudio({
         imageDataUrl = '';
       }
 
-      // Run high-accuracy optical detection on canvas (scaled to 960x540 overlay)
-      const detectionResult = performCanvasStudentDetection(
+      // Run high-accuracy deep learning person detection (COCO-SSD / Morphological Contour)
+      const detectionResult = await detectPeopleInFrame(
         canvas, 
-        sensitivityMode, 
-        calibratedHeadcount,
-        960,
-        540
+        960, 
+        540, 
+        calibratedHeadcount
       );
 
       const accurateCount = detectionResult.count;
@@ -458,7 +291,7 @@ export default function VideoExtractionStudio({
           image_data: imageDataUrl,
           people_count: accurateCount,
           bounding_boxes: accurateBoxes,
-          notes: `Snapshot extracted at ${timeStr}. Verified ${accurateCount} students present (raw optical sensor clarity, zero blur). 7-day auto-purge policy applied.`
+          notes: `Snapshot extracted at ${timeStr}. Verified ${accurateCount} students present. 7-day auto-purge policy applied.`
         })
       });
 
@@ -620,7 +453,7 @@ export default function VideoExtractionStudio({
               Statutory 7-Day Storage Retention & Auto-Purge Policy Active
             </strong>
             <div style={{ fontSize: '0.68rem', color: '#d4d4d8' }}>
-              Snapshots and extracted frames are <strong>automatically permanently deleted after exactly 7 days (168 hours)</strong>. Full raw optical clarity enabled (zero blur obfuscation) for maximum YOLO counting accuracy.
+              Snapshots and extracted frames are <strong>automatically permanently deleted after exactly 7 days (168 hours)</strong>. High-accuracy deep learning CV person detection enabled.
             </div>
           </div>
         </div>
