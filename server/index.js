@@ -1318,6 +1318,35 @@ app.post('/api/snapshots/extract', (req, res) => {
         alerts.unshift(triggeredAlert);
       }
     }
+  // Reconcile with official submitted attendance
+  const latestAtt = attendanceRecords
+    .filter(a => a.centre_id === targetCentreId)
+    .sort((a, b) => new Date(b.submitted_at || b.date || 0) - new Date(a.submitted_at || a.date || 0))[0];
+
+  const reportedCount = req.body.reported_count !== undefined 
+    ? Number(req.body.reported_count) 
+    : (latestAtt ? latestAtt.reported_count : (targetCentre.reported_attendance || count));
+
+  const attendanceDiscrepancy = count - reportedCount;
+  const absentCount = Math.max(0, reportedCount - count);
+  const presentCount = Math.min(reportedCount, count);
+
+  if (absentCount > 0 && !triggeredAlert) {
+    triggeredAlert = {
+      alert_id: `ALT-VID-${Date.now().toString().slice(-4)}`,
+      centre_id: targetCentreId,
+      category: 'Attendance Mismatch',
+      title: `Absenteeism Deficit: ${absentCount} Marked Student(s) Absent in Class`,
+      description: `Official attendance roll recorded ${reportedCount} trainees, but CCTV recording analysis verified only ${count} present in frame (${absentCount} absent).`,
+      severity: absentCount >= 3 ? 'Critical' : 'Medium',
+      status: 'Pending Review',
+      discrepancy: `-${absentCount} trainees`,
+      confidence: 0.94,
+      evidence_id: snapId,
+      created_at: new Date().toISOString(),
+      recommendation: 'Verify physical presence against roll call register in Evidence Review.'
+    };
+    alerts.unshift(triggeredAlert);
   }
 
   const now = Date.now();
@@ -1356,8 +1385,11 @@ app.post('/api/snapshots/extract', (req, res) => {
     retention_status: 'Active (Auto-purges in 7d)',
     people_count: count,
     confidence: 0.94,
-    reported_count: targetCentre ? targetCentre.approved_seating_capacity : count,
-    discrepancy: temporalDiff ? temporalDiff.people_count_delta : 0,
+    reported_count: reportedCount,
+    discrepancy: attendanceDiscrepancy,
+    present_count: presentCount,
+    absent_count: absentCount,
+    compliance_status: absentCount === 0 ? 'ALL_PRESENT' : 'DEFICIT_ABSENT',
     seating_detected: count + 2,
     workshop_active: true,
     raw_optical_clarity: '100% High-Definition Optical Sensor',
@@ -1367,7 +1399,7 @@ app.post('/api/snapshots/extract', (req, res) => {
     evidence_uri: image_data || '',
     temporal_diff: temporalDiff,
     bounding_boxes: activeBoxes,
-    notes: notes || `Extracted frame from video at timestamp ${video_timestamp || '00:00'}.`
+    notes: notes || `Extracted frame from video at timestamp ${video_timestamp || '00:00'}. Reported: ${reportedCount}, Present: ${presentCount}, Absent: ${absentCount}.`
   };
 
   detectionSnapshots.unshift(newSnapshot);

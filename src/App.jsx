@@ -281,6 +281,8 @@ export default function App() {
               <ErrorBoundary fallbackTitle="CCTV Video Studio Recovered">
                 <VideoExtractionStudio 
                   centres={centres}
+                  attendanceRecords={attendanceRecords}
+                  selectedCentreId={selectedCentreId}
                   onRefreshData={fetchData}
                   onOpenAddCentreModal={() => setIsAddCentreModalOpen(true)}
                   onNavigateToSnapshotReview={handleNavigateToSnapshotReview}

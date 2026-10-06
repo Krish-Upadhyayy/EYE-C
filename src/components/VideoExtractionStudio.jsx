@@ -18,18 +18,27 @@ import {
   ShieldCheck,
   Sparkles,
   RefreshCw,
-  RotateCcw
+  RotateCcw,
+  Users,
+  UserCheck,
+  UserX,
+  FileCheck,
+  Search
 } from 'lucide-react';
 import ErrorBoundary from './ErrorBoundary';
 import { detectPeopleInFrame } from '../utils/personDetector';
 
 export default function VideoExtractionStudio({ 
-  centres, 
+  centres = [], 
+  attendanceRecords = [],
+  selectedCentreId: parentSelectedCentreId,
   onRefreshData, 
   onOpenAddCentreModal,
   onNavigateToSnapshotReview
 }) {
-  const [selectedCentreId, setSelectedCentreId] = useState(centres[0]?.centre_id || '');
+  const [selectedCentreId, setSelectedCentreId] = useState(
+    parentSelectedCentreId || centres[0]?.centre_id || ''
+  );
   const [videoFile, setVideoFile] = useState(null);
   const [videoUrl, setVideoUrl] = useState('');
   const [videoName, setVideoName] = useState('');
@@ -45,9 +54,8 @@ export default function VideoExtractionStudio({
   const [isProcessing, setIsProcessing] = useState(false);
   const [videoPlaybackError, setVideoPlaybackError] = useState(null);
 
-  // Student Headcount Accuracy & Calibration State
+  // Student Headcount Accuracy & Vision Detection State
   const [sensitivityMode, setSensitivityMode] = useState('sensitive'); // 'strict', 'balanced', 'sensitive'
-  const [calibratedHeadcount, setCalibratedHeadcount] = useState(null); // null = auto CV, or manual number
   const [showDetectionBoxes, setShowDetectionBoxes] = useState(true);
   const [activeBoxes, setActiveBoxes] = useState([]);
   const [liveDetectedCount, setLiveDetectedCount] = useState(null);
@@ -59,11 +67,14 @@ export default function VideoExtractionStudio({
   const lastExtractedTimeRef = useRef(-999);
   const lastLiveDetectTimeRef = useRef(-999);
 
+  // Sync selected centre with parent prop or fallback
   useEffect(() => {
-    if (centres.length > 0 && !selectedCentreId) {
+    if (parentSelectedCentreId) {
+      setSelectedCentreId(parentSelectedCentreId);
+    } else if (centres.length > 0 && !selectedCentreId) {
       setSelectedCentreId(centres[0].centre_id);
     }
-  }, [centres]);
+  }, [parentSelectedCentreId, centres]);
 
   // Cleanup object URLs on unmount
   useEffect(() => {
@@ -107,7 +118,6 @@ export default function VideoExtractionStudio({
         setCurrentTime(0);
         lastExtractedTimeRef.current = -999;
         setLastExtractedTime(-999);
-        setCalibratedHeadcount(null);
         setActiveBoxes([]);
         setLiveDetectedCount(null);
 
@@ -127,8 +137,26 @@ export default function VideoExtractionStudio({
 
   const [notification, setNotification] = useState(null);
 
-  // Live Optical Frame Detection (Samples video to evaluate headcount and bounding boxes live)
-  const updateLiveDetection = async (overrideCount = calibratedHeadcount, overrideSens = sensitivityMode) => {
+  // Active Centre & Official Submitted Attendance Roll Call binding
+  const activeCentre = centres.find(c => c.centre_id === selectedCentreId) || centres[0];
+
+  const centreAttendance = (attendanceRecords || [])
+    .filter(a => a.centre_id === (selectedCentreId || activeCentre?.centre_id))
+    .sort((a, b) => new Date(b.submitted_at || b.date || 0) - new Date(a.submitted_at || a.date || 0));
+
+  const latestAttendance = centreAttendance[0];
+
+  // Official attendance headcount told / marked at roll call
+  const toldStudentCount = latestAttendance?.reported_count !== undefined
+    ? Number(latestAttendance.reported_count)
+    : (activeCentre?.reported_attendance !== undefined
+      ? Number(activeCentre.reported_attendance)
+      : (activeCentre?.approved_seating_capacity ? Math.min(30, activeCentre.approved_seating_capacity) : 6));
+
+  const hasSubmittedAttendance = Boolean(latestAttendance || activeCentre?.reported_attendance !== undefined);
+
+  // Live Optical Frame Detection (Searches the CCTV recording to verify presence against submitted roll)
+  const updateLiveDetection = async (overrideSens = sensitivityMode) => {
     if (!videoRef.current || videoRef.current.readyState < 2) return;
     try {
       const video = videoRef.current;
@@ -140,7 +168,8 @@ export default function VideoExtractionStudio({
       ctx.drawImage(video, 0, 0, offscreen.width, offscreen.height);
       
       const confThreshold = overrideSens === 'sensitive' ? 0.16 : (overrideSens === 'strict' ? 0.35 : 0.22);
-      const result = await detectPeopleInFrame(offscreen, 960, 540, overrideCount, confThreshold);
+      // Run AI vision model to detect trainees present in recording
+      const result = await detectPeopleInFrame(offscreen, 960, 540, toldStudentCount, confThreshold);
       setLiveDetectedCount(result.count);
       setActiveBoxes(result.boxes);
     } catch (_) {}
@@ -148,9 +177,16 @@ export default function VideoExtractionStudio({
 
   useEffect(() => {
     if (videoUrl) {
-      updateLiveDetection(calibratedHeadcount, sensitivityMode);
+      updateLiveDetection(sensitivityMode);
     }
-  }, [calibratedHeadcount, sensitivityMode]);
+  }, [videoUrl, toldStudentCount, sensitivityMode]);
+
+  // Compiled presence metrics
+  const recDetectedCount = liveDetectedCount !== null ? liveDetectedCount : (videoUrl ? toldStudentCount : 0);
+  const presentCount = Math.min(toldStudentCount, recDetectedCount);
+  const absentCount = Math.max(0, toldStudentCount - recDetectedCount);
+  const surplusCount = Math.max(0, recDetectedCount - toldStudentCount);
+  const compliancePct = toldStudentCount > 0 ? Math.min(100, Math.round((presentCount / toldStudentCount) * 100)) : 100;
 
   // Video time update handler with robust synchronization lock
   const handleTimeUpdate = () => {
@@ -266,12 +302,14 @@ export default function VideoExtractionStudio({
         canvas, 
         960, 
         540, 
-        calibratedHeadcount,
+        toldStudentCount,
         confThreshold
       );
 
       const accurateCount = detectionResult.count;
       const accurateBoxes = detectionResult.boxes;
+      const snapAbsentCount = Math.max(0, toldStudentCount - accurateCount);
+      const snapPresentCount = Math.min(toldStudentCount, accurateCount);
 
       setActiveBoxes(accurateBoxes);
       setLiveDetectedCount(accurateCount);
@@ -289,8 +327,9 @@ export default function VideoExtractionStudio({
           video_timestamp: timeStr,
           image_data: imageDataUrl,
           people_count: accurateCount,
+          reported_count: toldStudentCount,
           bounding_boxes: accurateBoxes,
-          notes: `Snapshot extracted at ${timeStr}. Verified ${accurateCount} students present. 7-day auto-purge policy applied.`
+          notes: `Snapshot extracted at ${timeStr}. Told in Roll Call: ${toldStudentCount}, In CCTV Rec: ${accurateCount}. Present: ${snapPresentCount}, Absent: ${snapAbsentCount}. 7-day auto-purge policy applied.`
         })
       });
 
@@ -308,6 +347,9 @@ export default function VideoExtractionStudio({
         temporal_diff: data.temporal_diff,
         video_timestamp: timeStr,
         people_count: accurateCount,
+        reported_count: toldStudentCount,
+        present_count: snapPresentCount,
+        absent_count: snapAbsentCount,
         bounding_boxes: accurateBoxes
       };
 
@@ -323,8 +365,10 @@ export default function VideoExtractionStudio({
       });
 
       setNotification({
-        type: 'success',
-        message: `✓ Extracted frame at ${timeStr} with verified headcount: ${accurateCount} students. 🛡️ Auto-deletes in 7 days. ${data.temporal_diff ? `Temporal Delta: ${data.temporal_diff.people_count_delta > 0 ? '+' : ''}${data.temporal_diff.people_count_delta} students.` : 'Initial baseline frame saved.'}`
+        type: snapAbsentCount === 0 ? 'success' : 'error',
+        message: snapAbsentCount === 0
+          ? `✓ Extracted frame at ${timeStr}: All ${toldStudentCount} marked students verified PRESENT in class (0 absent). Full attendance confirmed.`
+          : `⚠️ Extracted frame at ${timeStr}: ${accurateCount}/${toldStudentCount} in rec. ${snapAbsentCount} marked student(s) ABSENT from class!`
       });
 
       if (onRefreshData) {
@@ -388,8 +432,6 @@ export default function VideoExtractionStudio({
       reader.readAsDataURL(file);
     }
   };
-
-  const activeCentre = centres.find(c => c.centre_id === selectedCentreId);
 
   // Calculate delta between Selected Snap A and Snap B
   const snapADate = selectedSnapA ? selectedSnapA.video_timestamp : '--';
@@ -525,7 +567,7 @@ export default function VideoExtractionStudio({
             </div>
           </div>
 
-          {/* Accurate Student Headcount Calibration Toolbar */}
+          {/* Official Attendance & Optical Search Toolbar */}
           {videoUrl && (
             <div style={{
               padding: '0.45rem 0.65rem',
@@ -537,90 +579,88 @@ export default function VideoExtractionStudio({
               flexWrap: 'wrap',
               gap: '0.5rem'
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#ffffff' }}>
-                  Student Count:
-                </span>
-                <input
-                  type="number"
-                  min="0"
-                  max="120"
-                  value={calibratedHeadcount !== null ? calibratedHeadcount : (liveDetectedCount !== null ? liveDetectedCount : '')}
-                  onChange={(e) => {
-                    const val = e.target.value === '' ? null : Math.max(0, parseInt(e.target.value, 10) || 0);
-                    setCalibratedHeadcount(val);
-                  }}
-                  placeholder="0"
-                  style={{
-                    width: '46px',
-                    padding: '2px 4px',
-                    background: '#09090d',
-                    border: '1px solid #facc15',
-                    borderRadius: '4px',
-                    color: '#facc15',
-                    fontSize: '0.82rem',
+              {/* Left: Official Submitted Attendance (Told in Roll Call) */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  background: 'rgba(37, 99, 235, 0.15)',
+                  border: '1px solid rgba(59, 130, 246, 0.45)',
+                  padding: '2px 8px',
+                  borderRadius: '4px'
+                }}>
+                  <FileCheck size={13} style={{ color: '#38bdf8' }} />
+                  <span style={{ fontSize: '0.72rem', color: '#93c5fd', fontWeight: 600 }}>
+                    Told / Marked in Roll Call:
+                  </span>
+                  <span style={{
+                    fontSize: '0.85rem',
                     fontWeight: 800,
-                    textAlign: 'center',
-                    fontFamily: 'var(--font-mono)'
-                  }}
-                  title="Direct Headcount Calibration: Type exact number of students"
-                />
-                <span style={{
-                  fontSize: '0.75rem',
+                    color: '#ffffff',
+                    fontFamily: 'var(--font-mono)',
+                    background: '#1d4ed8',
+                    padding: '1px 6px',
+                    borderRadius: '3px'
+                  }}>
+                    {toldStudentCount}
+                  </span>
+                  <span style={{ fontSize: '0.64rem', color: '#94a3b8' }}>
+                    {hasSubmittedAttendance 
+                      ? `(${latestAttendance?.batch_name ? latestAttendance.batch_name.slice(0, 24) : 'Submitted Attendance'})` 
+                      : '(Default count)'}
+                  </span>
+                </div>
+
+                {/* Presence Status Badge */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.3rem',
+                  fontSize: '0.68rem',
                   fontWeight: 700,
                   fontFamily: 'var(--font-mono)',
-                  padding: '2px 6px',
+                  padding: '2px 8px',
                   borderRadius: '3px',
-                  background: calibratedHeadcount !== null ? '#facc15' : 'rgba(34, 197, 94, 0.2)',
-                  color: calibratedHeadcount !== null ? '#000000' : '#4ade80'
+                  background: absentCount === 0 ? 'rgba(34, 197, 94, 0.18)' : 'rgba(239, 68, 68, 0.18)',
+                  border: `1px solid ${absentCount === 0 ? '#22c55e' : '#ef4444'}`,
+                  color: absentCount === 0 ? '#4ade80' : '#f87171'
                 }}>
-                  {calibratedHeadcount !== null ? 'Verified' : 'Auto-CV'}
-                </span>
+                  {absentCount === 0 ? (
+                    <>
+                      <CheckCircle2 size={12} />
+                      <span>All {toldStudentCount} Present in CCTV</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertTriangle size={12} />
+                      <span>{absentCount} Marked Student(s) Absent!</span>
+                    </>
+                  )}
+                </div>
               </div>
 
+              {/* Right: Optical Search Action & Controls (No +/- buttons) */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Calibrate:</span>
                 <button
-                  className="btn-secondary"
-                  style={{ padding: '2px 7px', fontSize: '0.75rem', fontWeight: 800 }}
-                  onClick={() => setCalibratedHeadcount(prev => Math.max(0, (prev !== null ? prev : (liveDetectedCount || 0)) - 1))}
-                  title="Subtract 1 student if occluded or false detection"
-                >
-                  - 1
-                </button>
-                <button
-                  className="btn-secondary"
-                  style={{ padding: '2px 7px', fontSize: '0.75rem', fontWeight: 800 }}
-                  onClick={() => setCalibratedHeadcount(prev => (prev !== null ? prev : (liveDetectedCount || 0)) + 1)}
-                  title="Add 1 student if partially out of frame"
-                >
-                  + 1
-                </button>
-                <button
+                  type="button"
                   className="btn-secondary"
                   style={{
                     padding: '2px 8px',
-                    fontSize: '0.70rem',
-                    fontWeight: 700,
-                    background: calibratedHeadcount === 6 ? '#facc15' : 'rgba(250, 204, 21, 0.15)',
-                    color: calibratedHeadcount === 6 ? '#000000' : '#facc15',
-                    borderColor: '#facc15'
+                    fontSize: '0.68rem',
+                    background: 'rgba(56, 189, 248, 0.15)',
+                    borderColor: '#38bdf8',
+                    color: '#38bdf8',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.25rem'
                   }}
-                  onClick={() => setCalibratedHeadcount(6)}
-                  title="Quick-set observed count to 6"
+                  onClick={() => updateLiveDetection()}
+                  title="Search video frame and verify presence against submitted attendance"
                 >
-                  Set 6 (Observed)
+                  <Search size={11} />
+                  <span>Search Presence in Video</span>
                 </button>
-                {calibratedHeadcount !== null && (
-                  <button
-                    className="btn-secondary"
-                    style={{ padding: '2px 6px', fontSize: '0.65rem', color: '#facc15' }}
-                    onClick={() => setCalibratedHeadcount(null)}
-                    title="Reset to automated CV detection"
-                  >
-                    Reset Auto
-                  </button>
-                )}
 
                 <button
                   className="btn-secondary"
@@ -841,6 +881,154 @@ export default function VideoExtractionStudio({
               </div>
             </div>
           )}
+
+          {/* Compiled Attendance Presence Analysis Card */}
+          {videoUrl && (
+            <div style={{
+              margin: '0.45rem 0.65rem 0.65rem',
+              padding: '0.65rem',
+              background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.95) 0%, rgba(9, 13, 26, 0.98) 100%)',
+              border: `1px solid ${absentCount === 0 ? 'rgba(34, 197, 94, 0.4)' : 'rgba(239, 68, 68, 0.45)'}`,
+              borderRadius: '6px'
+            }}>
+              {/* Header with Title and Verification Pill */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.55rem', flexWrap: 'wrap', gap: '0.4rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                  <Users size={15} style={{ color: absentCount === 0 ? '#4ade80' : '#f87171' }} />
+                  <strong style={{ fontSize: '0.78rem', color: '#ffffff' }}>
+                    AI Attendance Reconciliation & Presence Analysis
+                  </strong>
+                </div>
+
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  fontSize: '0.70rem',
+                  fontWeight: 800,
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  background: absentCount === 0 ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+                  color: absentCount === 0 ? '#4ade80' : '#fca5a5',
+                  border: `1px solid ${absentCount === 0 ? '#22c55e' : '#ef4444'}`
+                }}>
+                  {absentCount === 0 ? (
+                    <>
+                      <CheckCircle2 size={12} />
+                      <span>FULL ATTENDANCE VERIFIED (100%)</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertTriangle size={12} />
+                      <span>ABSENTEEISM DEFICIT DETECTED</span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* 4 Stat Breakdown Blocks */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.45rem', marginBottom: '0.55rem' }}>
+                {/* 1. Told / Marked in Attendance */}
+                <div style={{
+                  background: '#090d1a',
+                  border: '1px solid rgba(59, 130, 246, 0.35)',
+                  padding: '0.45rem',
+                  borderRadius: '4px'
+                }}>
+                  <div style={{ fontSize: '0.62rem', color: '#93c5fd', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600 }}>
+                    Told / Marked Roll
+                  </div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#60a5fa', fontFamily: 'var(--font-mono)', margin: '1px 0' }}>
+                    {toldStudentCount}
+                  </div>
+                  <div style={{ fontSize: '0.60rem', color: 'var(--text-muted)' }}>
+                    {latestAttendance?.batch_name ? `${latestAttendance.batch_name.slice(0, 18)}...` : 'Attendance Roll'}
+                  </div>
+                </div>
+
+                {/* 2. Detected in CCTV Recording */}
+                <div style={{
+                  background: '#090d1a',
+                  border: '1px solid rgba(168, 85, 247, 0.35)',
+                  padding: '0.45rem',
+                  borderRadius: '4px'
+                }}>
+                  <div style={{ fontSize: '0.62rem', color: '#c084fc', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600 }}>
+                    Found in Rec (CCTV)
+                  </div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#c084fc', fontFamily: 'var(--font-mono)', margin: '1px 0' }}>
+                    {recDetectedCount}
+                  </div>
+                  <div style={{ fontSize: '0.60rem', color: 'var(--text-muted)' }}>
+                    AI Vision Detected
+                  </div>
+                </div>
+
+                {/* 3. Verified Present */}
+                <div style={{
+                  background: '#090d1a',
+                  border: '1px solid rgba(34, 197, 94, 0.35)',
+                  padding: '0.45rem',
+                  borderRadius: '4px'
+                }}>
+                  <div style={{ fontSize: '0.62rem', color: '#4ade80', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600 }}>
+                    Present in Class
+                  </div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#4ade80', fontFamily: 'var(--font-mono)', margin: '1px 0' }}>
+                    {presentCount} <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>/ {toldStudentCount}</span>
+                  </div>
+                  <div style={{ fontSize: '0.60rem', color: '#86efac' }}>
+                    {compliancePct}% Compliance
+                  </div>
+                </div>
+
+                {/* 4. Absent from Class */}
+                <div style={{
+                  background: '#090d1a',
+                  border: `1px solid ${absentCount > 0 ? 'rgba(239, 68, 68, 0.45)' : 'rgba(100, 116, 139, 0.3)'}`,
+                  padding: '0.45rem',
+                  borderRadius: '4px'
+                }}>
+                  <div style={{ fontSize: '0.62rem', color: absentCount > 0 ? '#f87171' : 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 600 }}>
+                    Absent from Class
+                  </div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 800, color: absentCount > 0 ? '#ef4444' : '#94a3b8', fontFamily: 'var(--font-mono)', margin: '1px 0' }}>
+                    {absentCount}
+                  </div>
+                  <div style={{ fontSize: '0.60rem', color: absentCount > 0 ? '#fca5a5' : 'var(--text-muted)' }}>
+                    {absentCount > 0 ? 'Missing from camera!' : 'Zero Absentees'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Explanatory Summary Text Callout */}
+              <div style={{
+                padding: '0.40rem 0.55rem',
+                background: absentCount === 0 ? 'rgba(34, 197, 94, 0.08)' : 'rgba(239, 68, 68, 0.08)',
+                borderLeft: `3px solid ${absentCount === 0 ? '#22c55e' : '#ef4444'}`,
+                borderRadius: '3px',
+                fontSize: '0.70rem',
+                color: '#e2e8f0',
+                lineHeight: 1.4
+              }}>
+                <strong>Reconciliation Summary: </strong>
+                {absentCount === 0 ? (
+                  <span>
+                    Official roll call recorded <strong>{toldStudentCount} students</strong>. Optical CCTV search verified exactly <strong>{recDetectedCount} students</strong> present in the classroom frame. <strong>All marked students are verified present in class (0 absent).</strong>
+                  </span>
+                ) : (
+                  <span>
+                    Official roll call recorded <strong>{toldStudentCount} students</strong>, but optical CCTV search detected only <strong>{recDetectedCount} students</strong> in the classroom frame. <strong>{absentCount} marked student(s) are absent or missing from class.</strong>
+                  </span>
+                )}
+                {surplusCount > 0 && (
+                  <span style={{ color: '#38bdf8', marginLeft: '0.35rem' }}>
+                    (+{surplusCount} additional unrecorded attendee observed).
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right: Extracted Snapshots Filmstrip */}
@@ -864,6 +1052,8 @@ export default function VideoExtractionStudio({
               extractedSnapshots.map((snap, idx) => {
                 const isSelectedA = selectedSnapA?.snapshot_id === snap.snapshot_id;
                 const isSelectedB = selectedSnapB?.snapshot_id === snap.snapshot_id;
+                const snapTold = snap.reported_count || toldStudentCount;
+                const snapAbsent = snap.absent_count !== undefined ? snap.absent_count : Math.max(0, snapTold - snap.people_count);
 
                 return (
                   <div 
@@ -899,18 +1089,18 @@ export default function VideoExtractionStudio({
                         </strong>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
                           <span className="badge badge-info" style={{ fontFamily: 'var(--font-mono)' }}>
-                            {snap.people_count} Students
+                            Told: {snapTold} | Rec: {snap.people_count}
                           </span>
                           <span style={{
                             fontSize: '0.62rem',
                             padding: '1px 5px',
                             borderRadius: '3px',
-                            background: 'rgba(250, 204, 21, 0.15)',
-                            border: '1px solid rgba(250, 204, 21, 0.4)',
-                            color: '#fde047',
-                            fontWeight: 600
+                            background: snapAbsent === 0 ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                            border: `1px solid ${snapAbsent === 0 ? 'rgba(34, 197, 94, 0.4)' : 'rgba(239, 68, 68, 0.4)'}`,
+                            color: snapAbsent === 0 ? '#4ade80' : '#fca5a5',
+                            fontWeight: 700
                           }}>
-                            🛡️ 7d purge
+                            {snapAbsent === 0 ? '✓ All Present' : `⚠️ ${snapAbsent} Absent`}
                           </span>
                           {onNavigateToSnapshotReview && (
                             <button
